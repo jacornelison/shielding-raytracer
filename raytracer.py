@@ -23,7 +23,7 @@ class vec3():
         return (self.x * other.x) + (self.y * other.y) + (self.z * other.z)
     def cross(self, other):
         x = self.y*other.z-self.z*other.y
-        y = self.x*other.z-self.z*other.x
+        y = self.z*other.x-self.x*other.z
         z = self.x*other.y-self.y*other.x
         return vec3(x,y,z)
     def dist(self):
@@ -56,10 +56,10 @@ class vec3():
 rgb = vec3
 
 (w, h) = (800, 600)         # Screen size
-L = vec3(0.0, 0.0, 5.0)        # Point light position
+L = vec3(-5.0, 0.0, 20.0)        # Point light position
 E = vec3(0., -1, 0.35)     # Eye position
 FARAWAY = 1.0e39            # an implausibly huge distance
-BOUNCES = 2                # How many bounces before we stop?
+BOUNCES = 3                # How many bounces before we stop?
 defAMB = rgb(0.01,0.01,0.01)
 AMBIENT = defAMB*10         # %-total light
 
