@@ -56,7 +56,7 @@ class vec3():
 rgb = vec3
 
 (w, h) = (800, 600)         # Screen size
-L = vec3(-5.0, 0.0, 20.0)        # Point light position
+L = vec3(0.0, 5.0, 10.0)        # Point light position
 E = vec3(0., -1, 0.35)     # Eye position
 FARAWAY = 1.0e39            # an implausibly huge distance
 BOUNCES = 3                # How many bounces before we stop?

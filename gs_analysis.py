@@ -13,31 +13,22 @@ import os.path as op
 X = rt.vec3(1.,0.,0.)
 Y = rt.vec3(0.,1.,0.)
 Z = rt.vec3(0.,0.,1.)
+ORG = rt.vec3(0.,0.,0.) # Origin
+conv = 41252 # sq-degrees over the unit sphere
 
-def fibonacci_sphere(samples=1,randomize=True):
-    rnd = 1.
-    if randomize:
-        rnd = random.random() * samples
+def fibonacci_sphere(samples=1):
 
-    points = []
-    offset = 2./samples
-    increment = np.pi * (3. - np.sqrt(5.));
-    x,y,z = [],[],[]
-    for i in range(samples):
-        y.append(((i * offset) - 1) + (offset / 2));
-        r = np.sqrt(1 - pow(y[-1],2))
+    indices = np.arange(0, samples, dtype=float) + 0.5
 
-        phi = ((i + rnd) % samples) * increment
+    phi = np.arccos(1 - 2 * indices / samples)
+    theta = np.pi * (1 + 5 ** 0.5) * indices
 
-        x.append(np.cos(phi) * r)
-        z.append(np.sin(phi) * r)
+    x, y, z = np.cos(theta) * np.sin(phi), np.sin(theta) * np.sin(phi), np.cos(phi);
 
-        #points.append([x,y,z])
+    #return np.asarray(x),np.asarray(y),np.asarray(z)
+    return x, y, z
 
-    return np.asarray(x),np.asarray(y),np.asarray(z)
-
-
-def camera(pos, dir, ort, Nxpix, Nypix, proj="flat", fov=np.pi/2, PLOT=False):
+def camera(pos, dir, ort, Nxpix, Nypix, proj="flat", fov=2*np.pi, PLOT=False):
     dir.norm()
     ort.norm()
     r = float(Nxpix) / Nypix
@@ -81,12 +72,16 @@ def camera(pos, dir, ort, Nxpix, Nypix, proj="flat", fov=np.pi/2, PLOT=False):
         ypix = th
 
     elif proj=="sphere2":
-        x,y,z = fibonacci_sphere(Nxpix*Nypix,randomize=False)
+        x,y,z = fibonacci_sphere(Nxpix*Nypix)
 
-        Q = rt.vec3(x,y,z)
+        V0 = rt.vec3(x,y,z)
+        r =  np.arccos(V0.dot(V3))
+        theta = np.arctan2(V0.dot(V2),V0.dot(V1))
+        ind = (r<fov/2)
+        Q = V0.extract(ind)
 
-        xpix = x
-        ypix = y
+        xpix = r[ind]
+        ypix = theta[ind]#np.where(ind,theta)
     if PLOT:
 
         fig = plt.figure()
@@ -120,6 +115,21 @@ def mountxform(pos, dir, ort, az, el, dk, mnt):
     ort = ort.rotate(Z, dk + mnt["drumangle"] - np.pi / 2).rotate(Y, np.pi / 2 - el).rotate(Z, -az)
     return pos, dir, ort
 
+def make_forebaffles(scene, config, az, el, dk):
+
+    nfb = config["nbaffles"]
+
+    for i in range(0,nfb):
+        if i==0:
+            clr = rgb(1, 1, 1)
+        else:
+            clr = rgb(0,i,0)
+        fbpos, fbdir, fbort = mountxform(ORG, Z, X, az, el, dk, config)
+        scene.append(rt.Cylinder(fbpos, fbrad, fbdir, cap=fbheight, diffuse=clr, mirror=0.1))
+        config["drumangle"] = config["drumangle"] + 2 * np.pi / nfb
+    return scene
+
+
 
 # Y-Z'-Y'' Rotation Matrix
 def zyz(V,a,b,g):
@@ -135,6 +145,117 @@ def zyz(V,a,b,g):
     ZPP = X.rotate(YP, b)
 
     return V.rotate(ZPP,a)
+
+# This is a test of the raytracer. The scene is only made up of our spherical camera and
+# a single unit sphere. Because it is easy to predict the solid angle of a sphere at a known
+# distance, we can verify that our camera can effectively return the solid angle to an arbitrary
+# accuracy and precision, independent of where the sphere is on the sky.
+def do_test(cf):
+
+
+    spr = 1. # Sphere radius
+    scene = [0]
+
+    plt.figure(1)
+    # Check for systematics due to pixel aliasing
+    # Should do this at a distance that is larger than the things you care about.
+    # in our case, a ground shield that is ~10 meters away
+    if True:
+        sppos, spdir, sport = mountxform(rt.vec3(0, 0, 20.), Z, X, 0., np.pi / 2., 0., cf)
+        scene[0] = rt.Sphere(sppos, spr, rgb(5, 0., 0.), mirror=0.02)
+
+        ang = 2 * np.arcsin(spr / sppos.dist())  # angular diameter of the sphere.
+        sphcov = (1 - np.cos(ang / 2)) / 2  # Fractional area: solid angle divided by 4pi
+
+        res = np.logspace(0,2)
+        r = np.zeros([len(res),])
+        for i in range(0,len(res)):
+            pperd = res[i]  # pipxels per sq-deg
+            w = int(np.sqrt(pperd * conv))  # Pixels over the whole sphere
+            O, D, xp, yp = camera(rt.vec3(0, 0, 0), spdir, sport, w, w, proj="sphere2")
+            color = rt.raytrace(O, D, scene, hitmap=True)
+            cd = color.dist()
+            ind = (cd == 5.)
+            r[i] = (np.size(np.where(ind))/(w**2))/sphcov-1
+
+
+        plt.subplot(211)
+        plt.semilogx(res,r,'.')
+        plt.title("Sphere at distance of 30m")
+        plt.xlabel("Pixels per sq-deg")
+        plt.ylabel("Fractional residuals")
+        plt.ylim([-0.01, 0.01])
+        plt.grid()
+
+    # Look at accuracy over distance when you've optimized the resolution.
+    if True:
+        pperd = 7 # pipxels per sq-deg
+        w = int(np.sqrt(pperd*conv)) # Pixels over the whole sphere
+        dist = np.logspace(0,1.5)
+        r = np.zeros([len(dist),])
+        for i in range(0,len(dist)):
+            sppos, spdir, sport = mountxform(rt.vec3(0, 0, dist[i]), Z, X, 0., np.pi/2., 0., cf)
+            scene[0] = rt.Sphere(sppos, spr, rgb(5, 0., 0.), mirror=0.02)
+
+            ang = 2 * np.arcsin(spr / sppos.dist())  # angular diameter of the sphere.
+            sphcov = (1 - np.cos(ang / 2)) / 2  # Fractional area: solid angle divided by 4pi
+
+            O, D, xp, yp = camera(rt.vec3(0, 0, 0), spdir, sport, w, w, proj="sphere2")
+            color = rt.raytrace(O, D, scene, hitmap=True)
+            cd = color.dist()
+            ind = (cd == 5.)
+            r[i] = (np.size(np.where(ind))/(w**2))/sphcov-1
+
+
+        plt.subplot(212)
+        plt.semilogx(dist,r)
+        plt.title("Camera at {0} px/sq-deg resolution".format(pperd))
+        plt.xlabel("Distance to sphere (m)")
+        plt.ylabel("Fractional residuals")
+        plt.ylim([-0.01, 0.01])
+        plt.grid()
+
+    plt.subplots_adjust(hspace=1.2)
+    #plt.show()
+    # Check for spatial systematics
+    if True:
+        az = np.arange(0, 2 * np.pi, np.pi / 2)
+        el = np.arange(0, np.pi / 2, np.pi / 20)
+        dk = np.arange(0, 1)  # range(0,2*np.pi,np.pi/2)
+        rat = np.zeros([len(az), len(el)])
+
+        pperd = 7  # pipxels per sq-deg
+        w = int(np.sqrt(pperd * conv))  # Pixels over the whole sphere
+        ext = [min(az), max(az), min(el), max(el)]
+        ext = [i * 180 / np.pi for i in ext]
+        cf["eloffz"] = 1.0
+        for i in range(0, len(az)):
+
+            for j in range(0, len(el)):
+                for k in range(0, len(dk)):
+                    sppos, spdir, sport = mountxform(rt.vec3(0, 0, 0.0), Z, X, az[i], el[j], dk[k], cf)
+                    scene[0] = rt.Sphere(sppos, spr, rgb(5, 0., 0.), mirror=0.02)
+
+                    ang = 2 * np.arcsin(spr / sppos.dist())  # angular diameter of the sphere.
+                    sphcov = (1 - np.cos(ang / 2)) / 2  # Fractional area: solid angle divided by 4pi
+                    O, D, xp, yp = camera(rt.vec3(0, 0, 0), spdir, sport, w, w, proj="sphere2")
+                    color = rt.raytrace(O, D, scene, hitmap=True)
+                    cd = color.dist()
+                    ind = (cd == 5.)
+                    rat[i, j] = ((np.size(np.where(ind)) / (w ** 2)) / sphcov) - 1
+
+        plt.figure(2)
+        plt.subplot(111)
+        plt.imshow(rat, extent=ext)
+        cbar = plt.colorbar()
+        cbar.ax.set_ylabel('Fractional Residuals', rotation=270)
+        plt.title("Camera at {0} px/sq-deg resolution, sphere ".format(pperd))
+        plt.ylabel("Elevation (o)")
+        plt.xlabel("Azimuth (o)")
+        plt.show()
+
+        # Settling on 7 pixels per sq-deg. Systematics due to pixelization
+        # are on the sub-percent level.
 
 # Options for the arg-parser
 ###############################################
@@ -154,7 +275,7 @@ def get_args():
                         help="Save a snapshot of the configuration (normally off)",
                         default=False,
                         action="store_true")
-    parser.add_argument("--spherecam",
+    parser.add_argument("--wincam",
                         help="Save a snapshot of the typical view from the window (normally off)",
                         default=False,
                         action="store_true")
@@ -163,24 +284,28 @@ def get_args():
                         default=def_dict,
                         )
     parser.add_argument("--az",
-                        help="Set telescope Azimuth",
+                        help="Set telescope Azimuth in degrees",
                         default=0.,
                         type=float)
     parser.add_argument("--el",
-                        help="Set telescope Azimuth",
+                        help="Set telescope Elevation in degrees.",
                         default=90.,
                         type=float)
     parser.add_argument("--dk",
-                        help="Set telescope Azimuth",
+                        help="Set telescope Deck in degrees.",
                         default=0.,
                         type=float)
+    parser.add_argument("--test",
+                        help="Runs various diagnostics under the do_test func. Hardcoded. Default off",
+                        default=False,
+                        action="store_true")
     return parser, parser.parse_args()
 
 
 
 
 if __name__ == "__main__":
-    def_dir = op.join(op.expanduser("~"), "shielding-raytacer", "data")
+    def_dir = op.join(op.expanduser("."), "data")
     def_filename = "raytrace"
     def_dict = "BA"
     parser, args = get_args()
@@ -194,8 +319,7 @@ if __name__ == "__main__":
         else:
             raise NameError("No CSV files found in {0}".format(args.dir))
     else:
-        if not args.title[-4::] == ".csv":
-            args.title = args.title + ".csv"
+
         filename = op.join(args.dir, args.title)
 
     if op.isfile(filename) and not args.ow:
@@ -206,8 +330,10 @@ if __name__ == "__main__":
             filename = op.join(args.dir, args.title + "{0}.csv".format(run_num))
         print("Using file: " + filename)
 
-
-    cf = configDict[args.config]
+    if args.test:
+        cf = configDict["test"]
+    else:
+        cf = configDict[args.config]
     t0 = time.time()
 
     rgb = rt.vec3
@@ -237,43 +363,27 @@ if __name__ == "__main__":
     el = eldeg*np.pi/180.
     dk = dkdeg*np.pi/180.
 
-    mountdict = {
-        "aptoffr" : 30*2.54/100, # in meters
-        "drumangle" : 0, # RADIANS
-        "aptoffz" : 1, # in meters
-        "eloffz" : 1, # in meters
-    }
 
-
-    fbpos, fbdir, fbort = mountxform(defpos, defdir, defort, az, el, dk, cf)
-    fb = rt.Cylinder(fbpos, fbrad, fbdir, cap=fbheight, diffuse=rgb(0, 1., 0.),mirror=0.02)
-
-    mountdict["drumangle"] = np.pi
-    fbpos, fbdir, fbort = mountxform(defpos, defdir, defort, az, el, dk, mountdict)
-    fb2 = rt.Cylinder(fbpos, fbrad, fbdir, cap=fbheight, mirror=0.02)
+    # Describe somewhere how we encode colors
 
     gs = rt.Cylinder(gspos, gsrad, gsdir, cap=gsheight, diffuse=rgb(5, 0., 0.), mirror=0.)
     floor = rt.CheckeredSphere(rt.vec3(0, 0, -99999.5), 99999.4, rgb(.75, .75, .75), 0.25)
 
-    # ds2 = rt.Sphere(rt.vec3(0, -3., 0.5), .6, rgb(0., 0.7, 0.), mirror=0.02)
-    # ds3 = rt.Sphere(rt.vec3(3., 0., 0.5), .6, rgb(0., 0., .5), mirror=0.02)
-    # ds4 = rt.Sphere(rt.vec3(-3., 0., 0.5), .6, rgb(.5, .223, .5), mirror=0.02)
     scene = [
         gs,
-        fb,
-        fb2,
         floor,
     ]
 
-    if args.config == "test":
-        sppos = rt.vec3(0,0,10.)
-        spr = 0.5
-        scene.append(rt.Sphere(sppos, spr, rgb(5, 0., 0.), mirror=0.02))
-        ang = 2*np.arcsin(spr/sppos.dist()) # angular diameter of the sphere.
-        print(ang)
-        sphcov = (ang/2)**2/4 # Area of the solid angle divided by 4pi
-        print("Expecting fractional coverage of: {0}".format(sphcov))
+    if args.test:
+        #do_test(cf)
+        sppos = rt.vec3(0,0,2.0)
+        spr = 1.0
+        scene.append(rt.Sphere(sppos, spr, rgb(5, 0., 0.), mirror=0.5))
+    else:
+        scene = make_forebaffles(scene, cf, az, el, dk)
 
+    rt.L.z = 20
+    rt.L.y = -1
     # Get Camera View
     if args.cam:
         w, h = (800, 400)
@@ -285,43 +395,42 @@ if __name__ == "__main__":
         O, D, xp, yp = camera(rt.vec3(-10., 0., 8.), camdir, camort, w, h, proj="flat", fov=np.pi / 2.2)
         color = rt.raytrace(O, D, scene,hitmap=False)
         rgb = [Image.fromarray((255 * np.clip(c, 0, 1).reshape((h, w))).astype(np.uint8), "L") for c in color.components()]
-        Image.merge("RGB", rgb).save("camview.png")
+        Image.merge("RGB", rgb).save(filename+"_camview.png")
 
     # Grab Hit Map
-    if args.spherecam:
+    if args.wincam:
         w, h = (400, 400)
-
-        O, D, xp, yp = camera(fbpos,fbdir,fbort,w,h,proj="sphere", fov=2*np.pi)
+        fbpos, fbdir, fbort = mountxform(ORG, Z, X, az, el, dk, cf)
+        O, D, xp, yp = camera(fbpos,fbdir,fbort,w,h,proj="sphere", fov=np.pi/2)
         color = rt.raytrace(O, D, scene, hitmap=True)
         rgb = [Image.fromarray((255 * np.clip(c, 0, 1).reshape((h, w))).astype(np.uint8), "L") for c in color.components()]
-        Image.merge("RGB", rgb).save("fbview.png")
+        Image.merge("RGB", rgb).save(filename+"fbview.png")
 
     if False:
         fig = plt.figure()
         ax = Axes3D(fig)
 
         plt.subplot(projection="polar")
-        print(np.shape(np.reshape(yp,(h,w))))
+        #print(np.shape(np.reshape(yp,(h,w))))
         cd = color.dist()
         x, y, c = np.reshape(xp,(h,w)),np.reshape(yp,(h,w)), np.reshape(cd,(h,w))
-        ind =(cd>0.5)&(cd<1)
-        r = np.size(np.where(ind))
-        print((r/(w*h)))
+        #ind =(cd>0.5)&(cd<1)
+        #r = np.size(np.where(ind))
+        #print((r/(w*h)))
         plt.pcolormesh(x, y, c)
-        plt.grid()
-        plt.colorbar()
+        #plt.grid()
+        #plt.colorbar()
         plt.show()
 
     if True:
-        w, h = (400, 400)
-        #w, h = (40, 40)
-        O, D, xp, yp = camera(fbpos, fbdir, fbort, w, h, proj="sphere2")
+        pperd = 7  # pipxels per sq-deg
+        w = int(np.sqrt(pperd * conv))  # Pixels over the whole sphere
+        O, D, xp, yp = camera(fbpos,fbdir,fbort, w, w, proj="sphere2", fov=np.pi)
         color = rt.raytrace(O, D, scene, hitmap=True)
         cd = color.dist()
-        ind =(cd==5.)
-        r = np.size(np.where(ind))
-        print("Fractional coverage: {0}".format(r / (w * h)))
-        #print(np.unique(cd))
+        ind = (cd == 5.)
+        r = (np.size(np.where(ind)) / (w ** 2))
+        print(r)
 
     print("Took {0}".format(time.time() - t0))
     print("Complete!")
