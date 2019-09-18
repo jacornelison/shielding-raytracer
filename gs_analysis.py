@@ -8,6 +8,8 @@ from config import configDict
 import argparse
 import glob
 import os.path as op
+import scipy.interpolate as intrp
+
 
 # Define coordinate system
 X = rt.vec3(1.,0.,0.)
@@ -28,7 +30,7 @@ def fibonacci_sphere(samples=1):
     #return np.asarray(x),np.asarray(y),np.asarray(z)
     return x, y, z
 
-def camera(pos, dir, ort, Nxpix, Nypix, proj="flat", fov=2*np.pi, PLOT=False):
+def camera(pos, dir, ort, Nxpix, Nypix, proj="flat", fov=2*np.pi, PLOT=False, viewer=False):
     dir.norm()
     ort.norm()
     r = float(Nxpix) / Nypix
@@ -71,17 +73,29 @@ def camera(pos, dir, ort, Nxpix, Nypix, proj="flat", fov=2*np.pi, PLOT=False):
         xpix = r
         ypix = th
 
+
+    # Samples approximately evenly across the unit sphere using a fibonacci sphere.
     elif proj=="sphere2":
         x,y,z = fibonacci_sphere(Nxpix*Nypix)
 
         V0 = rt.vec3(x,y,z)
         r =  np.arccos(V0.dot(V3))
         theta = np.arctan2(V0.dot(V2),V0.dot(V1))
+
         ind = (r<fov/2)
         Q = V0.extract(ind)
 
-        xpix = r[ind]
-        ypix = theta[ind]#np.where(ind,theta)
+        r = r[ind]
+        theta = theta[ind]
+
+        x = 2*np.sin(r/2)*np.cos(theta)
+        y = 2*np.sin(r/2)*np.sin(theta)
+
+
+        xpix = x
+        ypix = y
+
+
     if PLOT:
 
         fig = plt.figure()
@@ -118,15 +132,20 @@ def mountxform(pos, dir, ort, az, el, dk, mnt):
 def make_forebaffles(scene, config, az, el, dk):
 
     nfb = config["nbaffles"]
-
+    # Make the forebaffles slightly taller but slightly lower so the camera doesn't see out the back
+    off = 0.25
     for i in range(0,nfb):
         if i==0:
-            clr = rgb(1, 1, 1)
+            clr = rgb(0.3, 0.3, 0.3)
         else:
             clr = rgb(0,i,0)
         fbpos, fbdir, fbort = mountxform(ORG, Z, X, az, el, dk, config)
         scene.append(rt.Cylinder(fbpos, fbrad, fbdir, cap=fbheight, diffuse=clr, mirror=0.1))
         config["drumangle"] = config["drumangle"] + 2 * np.pi / nfb
+
+
+
+
     return scene
 
 
@@ -365,13 +384,19 @@ if __name__ == "__main__":
 
 
     # Describe somewhere how we encode colors
-
-    gs = rt.Cylinder(gspos, gsrad, gsdir, cap=gsheight, diffuse=rgb(5, 0., 0.), mirror=0.)
+    # I make the groundshield color a very specific float so that I can pick it out in the hit maps.
+    gsclr = 5.234563
+    gs = rt.Cylinder(gspos, gsrad, gsdir, cap=gsheight, diffuse=rgb(gsclr, 0., 0.), mirror=0.)
     floor = rt.CheckeredSphere(rt.vec3(0, 0, -99999.5), 99999.4, rgb(.75, .75, .75), 0.25)
 
+    cf["aptoffz"] -=0.1
+    fbpos, fbdir, fbort = mountxform(ORG, Z, X, az, el, dk, cf)
+    #mask = rt.Disc(fbpos,cf["fbrad"],fbdir,fbort)
+    cf["aptoffz"] += 0.1
     scene = [
         gs,
         floor,
+        #mask,
     ]
 
     if args.test:
@@ -382,42 +407,64 @@ if __name__ == "__main__":
     else:
         scene = make_forebaffles(scene, cf, az, el, dk)
 
+
     rt.L.z = 20
     rt.L.y = -1
     # Get Camera View
     if args.cam:
         w, h = (800, 400)
-        camaz = 0
-        camel = -30
+        camaz = 90
+        camel = 0#-35
         camdk = -90
         camdir = Z.rotate(Z, camdk * np.pi / 180).rotate(Y, (90 - camel) * np.pi / 180).rotate(Z, -camaz * np.pi / 180)
         camort = X.rotate(Z, camdk * np.pi / 180).rotate(Y, (90 - camel) * np.pi / 180).rotate(Z, -camaz * np.pi / 180)
-        O, D, xp, yp = camera(rt.vec3(-10., 0., 8.), camdir, camort, w, h, proj="flat", fov=np.pi / 2.2)
+        #O, D, xp, yp = camera(rt.vec3(-10., 0., 8.), camdir, camort, w, h, proj="flat", fov=np.pi / 2.2)
+        O, D, xp, yp = camera(rt.vec3(-0., 3., 3.), camdir, camort, w, h, proj="flat", fov=np.pi / 2.2)
         color = rt.raytrace(O, D, scene,hitmap=False)
         rgb = [Image.fromarray((255 * np.clip(c, 0, 1).reshape((h, w))).astype(np.uint8), "L") for c in color.components()]
         Image.merge("RGB", rgb).save(filename+"_camview.png")
 
     # Grab Hit Map
-    if args.wincam:
-        w, h = (400, 400)
-        fbpos, fbdir, fbort = mountxform(ORG, Z, X, az, el, dk, cf)
-        O, D, xp, yp = camera(fbpos,fbdir,fbort,w,h,proj="sphere", fov=np.pi/2)
-        color = rt.raytrace(O, D, scene, hitmap=True)
-        rgb = [Image.fromarray((255 * np.clip(c, 0, 1).reshape((h, w))).astype(np.uint8), "L") for c in color.components()]
-        Image.merge("RGB", rgb).save(filename+"fbview.png")
-
     if False:
-        fig = plt.figure()
-        ax = Axes3D(fig)
+        w, h = (400, 400)
+        #cf["aptoffr"] = cf["aptoffr"] - cf["winrad"]
+        fbpos, fbdir, fbort = mountxform(ORG, Z, X, az, el, dk, cf)
+        #O, D, xp, yp = camera(fbpos,fbdir,fbort,w,h,proj="sphere", fov=np.pi/2)
+        O, D, xp, yp = camera(fbpos, fbdir, fbort, w, h, proj="sphere",fov=np.pi/2, viewer=True)
+        color = rt.raytrace(O, D, scene, hitmap=True)
 
-        plt.subplot(projection="polar")
-        #print(np.shape(np.reshape(yp,(h,w))))
+        rgb = [Image.fromarray((255 * np.clip(c, 0, 1).reshape((w, h))).astype(np.uint8), "L") for c in color.components()]
+        Image.merge("RGB", rgb).save(filename+"_fbview.png")
+
+
+    if args.wincam:
+        pperd = 7  # pipxels per sq-deg
+        w = int(np.sqrt(pperd * conv))  # Pixels over the whole sphere
+        #cf["aptoffr"] = cf["aptoffr"] - cf["winrad"]
+        fbpos, fbdir, fbort = mountxform(ORG, Z, X, az, el, dk, cf)
+        # O, D, xp, yp = camera(fbpos,fbdir,fbort,w,h,proj="sphere", fov=np.pi/2)
+        fov = np.pi
+        O, D, xp, yp = camera(fbpos, fbdir, fbort, w, w, proj="sphere2", fov=fov, viewer=True)
+        color = rt.raytrace(O, D, scene, hitmap=True)
         cd = color.dist()
-        x, y, c = np.reshape(xp,(h,w)),np.reshape(yp,(h,w)), np.reshape(cd,(h,w))
-        #ind =(cd>0.5)&(cd<1)
-        #r = np.size(np.where(ind))
-        #print((r/(w*h)))
-        plt.pcolormesh(x, y, c)
+
+        stepx = (max(xp)-min(xp))/np.sqrt(len(xp))*(2*np.pi/fov)
+        stepy = (max(yp)-min(yp))/np.sqrt(len(yp))*(2*np.pi/fov)
+        grid_x, grid_y = np.meshgrid(np.arange(min(xp),max(xp),stepx), np.arange(min(yp),max(yp),stepy))
+
+        xy = np.zeros([2,len(xp)])
+        xy[0,:], xy[1,:] = xp, yp
+        c = intrp.griddata(xy.T,cd,(grid_x,grid_y), method="cubic")
+
+        fig = plt.figure(figsize=(4,4))
+        plt.subplot()
+        plt.pcolormesh(grid_y*180/np.pi, grid_x*180/np.pi, c, vmin=0, vmax=5)
+        plt.xlabel("x' (deg)")
+        plt.ylabel("y' (deg)")
+        plt.axis('equal')
+        fov = fov*180/np.pi
+        plt.xlim([-1*fov/2, fov/2])
+        plt.ylim([-1 * fov / 2, fov / 2])
         #plt.grid()
         #plt.colorbar()
         plt.show()
@@ -428,7 +475,7 @@ if __name__ == "__main__":
         O, D, xp, yp = camera(fbpos,fbdir,fbort, w, w, proj="sphere2", fov=np.pi)
         color = rt.raytrace(O, D, scene, hitmap=True)
         cd = color.dist()
-        ind = (cd == 5.)
+        ind = (cd == gsclr)
         r = (np.size(np.where(ind)) / (w ** 2))
         print(r)
 

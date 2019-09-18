@@ -85,6 +85,67 @@ def raytrace(O, D, scene, bounce = 0, hitmap=False):
                 color += s.diffuse.place(hit)
     return color
 
+
+class Disc:
+    def __init__(self, center, r, dir, ort, diffuse=rgb(1, 1, 1), mirror = 0.5):
+
+        self.c = center
+        self.r = r
+        self.dir = dir.norm()
+        self.ort = ort.norm()
+        self.ort2 = dir.cross(ort).norm()
+        self.diffuse = diffuse
+        self.mirror = mirror
+
+
+    def intersect(self, O, D):
+        Q = O-self.c
+
+        h = -self.dir.dot(Q)/D.dot(self.dir)
+        r = self.ort.dot(Q+D*h)
+        s = self.ort2.dot(Q + D * h)
+
+        pred = np.sqrt(r**2+s**2)<self.r
+
+        return np.where(pred, h, FARAWAY)
+
+    def diffusecolor(self, M):
+        return self.diffuse
+
+    def light(self, O, D, d, scene, bounce):
+        M = (O + D * d)                         # intersection point
+        N = (M - self.c) * (1. / self.r)        # normal
+        toL = (L - M).norm()                    # direction to light
+        toO = (E - M).norm()                    # direction to ray origin
+        nudged = M + N * .0001                  # M nudged to avoid itself
+
+        # Shadow: find if the point is shadowed or not.
+        # This amounts to finding out if M can see the light
+        light_distances = [s.intersect(nudged, toL) for s in scene]
+        light_nearest = reduce(np.minimum, light_distances)
+        seelight = light_distances[scene.index(self)] == light_nearest
+
+        # Ambient
+        color = AMBIENT
+
+        # Lambert shading (diffuse)
+        lv = np.maximum(N.dot(toL), 0)
+        color += self.diffusecolor(M) * lv * seelight
+
+        # Reflection
+        if bounce < BOUNCES:
+            rayD = (D - N * 2 * D.dot(N)).norm()
+            color += raytrace(nudged, rayD, scene, bounce + 1) * self.mirror
+
+        # Blinn-Phong shading (specular)
+        phong = N.dot((toL + toO).norm())
+        color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
+        return color
+
+
+
+
+
 class Cylinder:
     def __init__(self, center, r, dir, cap=1.0, diffuse=rgb(1, 1, 1), mirror = 0.5):
 
@@ -231,9 +292,10 @@ if __name__ == "__main__":
     #Sphere(vec3(-2.75, .1, 3.5), .6, rgb(1., .572, .184)),
     scene = [
         #Sphere(vec3(.75, .1, 1.), 0.6, rgb(0, 0, 1)),
-        Sphere(vec3(-.75, 2.25, 0.1), .6, rgb(.5, .223, .5)),
-        Cylinder(vec3(-2.75,3.5,0.0), 0.5, vec3(0.0,1.0,1.0),diffuse=rgb(1., .0, .0)),
-        Cylinder(vec3(.75,1.0,-0.5), 5, vec3(0.0,0.0,1.0),cap=2.0, diffuse=rgb(0.0, .0, 1.0)),
+        #Sphere(vec3(-.75, 2.25, 0.1), .6, rgb(.5, .223, .5)),
+        #Cylinder(vec3(-2.75,3.5,0.0), 0.5, vec3(0.0,1.0,1.0),diffuse=rgb(1., .0, .0)),
+        #Cylinder(vec3(.75,1.0,-0.5), 5, vec3(0.0,0.0,1.0),cap=2.0, diffuse=rgb(0.0, .0, 1.0)),
+        Disc(vec3(0,0,0.5), 0.75, vec3(0.0,1.0,1), vec3(1.0,0.0,0.0), diffuse=rgb(0.0, .0, 1.0)),
         CheckeredSphere(vec3(0,0, -99999.5), 99999, rgb(.75, .75, .75), 0.25),
         ]
 
