@@ -53,17 +53,25 @@ class vec3():
         k.norm()
         return self*np.cos(th) + k.cross(self)*np.sin(th) + k*k.dot(self)*(1-np.cos(th))
 
+
 rgb = vec3
 
 (w, h) = (800, 600)         # Screen size
-L = vec3(0.0, 5.0, 10.0)        # Point light position
+L = vec3(5.0, -3.0, 10.0)        # Point light position
 E = vec3(0., -1, 0.35)     # Eye position
 FARAWAY = 1.0e39            # an implausibly huge distance
-BOUNCES = 3                # How many bounces before we stop?
+BOUNCES = 2                # How many bounces before we stop?
 defAMB = rgb(0.01,0.01,0.01)
 AMBIENT = defAMB*10         # %-total light
 
-def raytrace(O, D, scene, bounce = 0, hitmap=False):
+# Define coordinate system
+X = vec3(1.,0.,0.)
+Y = vec3(0.,1.,0.)
+Z = vec3(0.,0.,1.)
+ORG = vec3(0.,0.,0.) # Origin
+
+
+def raytrace(O, D, scene, RO, bounce = 0, hitmap=False):
     # O is the ray origin, D is the normalized ray direction
     # scene is a list of Sphere objects (see below)
     # bounce is the number of the bounce, starting at zero for camera rays
@@ -76,18 +84,28 @@ def raytrace(O, D, scene, bounce = 0, hitmap=False):
         hit = (nearest != FARAWAY) & (d == nearest)
         if np.any(hit):
             dc = extract(hit, d)
+            Oc = O.extract(hit)
+            Dc = D.extract(hit)
+            cc = s.light(Oc, Dc, dc, scene, RO, bounce,hitmap)
             if not hitmap:
-                Oc = O.extract(hit)
-                Dc = D.extract(hit)
-                cc = s.light(Oc, Dc, dc, scene, bounce)
+                #Oc = O.extract(hit)
+                #Dc = D.extract(hit)
+                #cc = s.light(Oc, Dc, dc, scene, RO, bounce)
                 color += cc.place(hit)
             else:
-                color += s.diffuse.place(hit)
+                color += cc.place(hit)
+
     return color
 
+def tone_map(color):
+    r,g,b = color.components()
+    lum = 0.2126*r+0.715*g+0.0722*b
+    return color * (1/(1+lum))
 
+
+## Object Classes
 class Disc:
-    def __init__(self, center, r, dir, ort, diffuse=rgb(1, 1, 1), mirror = 0.5):
+    def __init__(self, center, r, dir, ort, diffuse=rgb(1, 1, 1), mirror = 1.0):
 
         self.c = center
         self.r = r
@@ -100,50 +118,52 @@ class Disc:
 
     def intersect(self, O, D):
         Q = O-self.c
-
         h = -self.dir.dot(Q)/D.dot(self.dir)
-        r = self.ort.dot(Q+D*h)
-        s = self.ort2.dot(Q + D * h)
 
-        pred = np.sqrt(r**2+s**2)<self.r
-
+        pred = (h>0) & ((Q+D*h).dist() < self.r)
         return np.where(pred, h, FARAWAY)
 
     def diffusecolor(self, M):
         return self.diffuse
 
-    def light(self, O, D, d, scene, bounce):
+    def light(self, O, D, d, scene, RO, bounce, hitmap=False):
         M = (O + D * d)                         # intersection point
-        N = (M - self.c) * (1. / self.r)        # normal
+        N = (self.dir*np.sign(self.dir.dot(D))*-1).norm()      # normal
         toL = (L - M).norm()                    # direction to light
-        toO = (E - M).norm()                    # direction to ray origin
+        toO = (RO - M).norm()                    # direction to ray origin
         nudged = M + N * .0001                  # M nudged to avoid itself
 
-        # Shadow: find if the point is shadowed or not.
-        # This amounts to finding out if M can see the light
-        light_distances = [s.intersect(nudged, toL) for s in scene]
-        light_nearest = reduce(np.minimum, light_distances)
-        seelight = light_distances[scene.index(self)] == light_nearest
 
-        # Ambient
-        color = AMBIENT
+        if not hitmap:
+            # Shadow: find if the point is shadowed or not.
+            # This amounts to finding out if M can see the light
+            light_distances = [s.intersect(nudged, toL) for s in scene]
+            light_nearest = reduce(np.minimum, light_distances)
+            seelight = light_distances[scene.index(self)] == light_nearest
 
-        # Lambert shading (diffuse)
-        lv = np.maximum(N.dot(toL), 0)
-        color += self.diffusecolor(M) * lv * seelight
+            # Ambient
+            color = AMBIENT
 
-        # Reflection
-        if bounce < BOUNCES:
-            rayD = (D - N * 2 * D.dot(N)).norm()
-            color += raytrace(nudged, rayD, scene, bounce + 1) * self.mirror
+            # Lambert shading (diffuse)
+            lv = np.maximum(N.dot(toL), 0)
+            color += self.diffusecolor(M) * lv * seelight
 
-        # Blinn-Phong shading (specular)
-        phong = N.dot((toL + toO).norm())
-        color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
+            # Reflection
+            if bounce < BOUNCES:
+                rayD = (D - N * 2 * D.dot(N)).norm()
+
+                color += raytrace(nudged, rayD, scene, RO, bounce + 1) * self.mirror
+
+            # Blinn-Phong shading (specular)
+            phong = N.dot((toL + toO).norm())
+            color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
+        else:
+            color = self.diffuse
+            if bounce<BOUNCES:
+                rayD = (D - N * 2 * D.dot(N)).norm()
+                color = raytrace(nudged, rayD, scene, RO, bounce + 1, hitmap=True)  # * self.mirror
+
         return color
-
-
-
 
 
 class Cylinder:
@@ -157,7 +177,7 @@ class Cylinder:
         self.mirror = mirror
         self.capa = self.c
         self.capb = self.c + self.dir*self.cap
-
+        self.id = id
 
     def intersect(self, O, D):
         def capcheck(P, capa, capb):
@@ -197,36 +217,50 @@ class Cylinder:
     def diffusecolor(self, M):
         return self.diffuse
 
-    def light(self, O, D, d, scene, bounce):
+    def light(self, O, D, d, scene, RO, bounce,hitmap=False):
+        def getnorm(ccen, cdir, vorg, vdir, vdist):
+            P = vorg + (vdir * vdist)
+            V1 = (cdir.cross(P - ccen).norm()).norm()
+            N = (V1.cross(cdir)).norm()
+            return N * np.sign(N.dot(vdir)) * -1
+
+
         M = (O + D * d)                         # intersection point
-        N = (M - self.c) * (1. / self.r)        # normal
+        N = getnorm(self.c,self.dir,O,D,d)        # normal
         toL = (L - M).norm()                    # direction to light
-        toO = (E - M).norm()                    # direction to ray origin
+        toO = (RO - M).norm()                    # direction to ray origin
         nudged = M + N * .0001                  # M nudged to avoid itself
 
-        # Shadow: find if the point is shadowed or not.
-        # This amounts to finding out if M can see the light
-        light_distances = [s.intersect(nudged, toL) for s in scene]
-        light_nearest = reduce(np.minimum, light_distances)
-        seelight = light_distances[scene.index(self)] == light_nearest
+        if not hitmap:
+            # Shadow: find if the point is shadowed or not.
+            # This amounts to finding out if M can see the light
+            light_distances = [s.intersect(nudged, toL) for s in scene]
+            light_nearest = reduce(np.minimum, light_distances)
+            seelight = light_distances[scene.index(self)] == light_nearest
 
-        # Ambient
-        color = AMBIENT
+            # Ambient
+            color = AMBIENT
 
-        # Lambert shading (diffuse)
-        lv = np.maximum(N.dot(toL), 0)
-        color += self.diffusecolor(M) * lv * seelight
+            # Lambert shading (diffuse)
+            lv = np.maximum(N.dot(toL), 0)
+            color += self.diffusecolor(M) * lv * seelight
 
-        # Reflection
-        if bounce < BOUNCES:
-            rayD = (D - N * 2 * D.dot(N)).norm()
-            color += raytrace(nudged, rayD, scene, bounce + 1) * self.mirror
+            # Reflection
+            if bounce < BOUNCES:
+                rayD = (D - N * 2 * D.dot(N)).norm()
 
-        # Blinn-Phong shading (specular)
-        phong = N.dot((toL + toO).norm())
-        color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
+                color += raytrace(nudged, rayD, scene, RO, bounce + 1) * self.mirror
+
+            # Blinn-Phong shading (specular)
+            phong = N.dot((toL + toO).norm())
+            color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
+        else:
+            color = self.diffuse
+            if bounce<BOUNCES:
+                rayD = (D - N * 2 * D.dot(N)).norm()
+                color = raytrace(nudged, rayD, scene, RO, bounce + 1, hitmap=True)  # * self.mirror
+
         return color
-
 
 
 class Sphere:
@@ -235,6 +269,7 @@ class Sphere:
         self.r = r
         self.diffuse = diffuse
         self.mirror = mirror
+
 
     def intersect(self, O, D):
         b = 2 * D.dot(O - self.c)
@@ -250,35 +285,44 @@ class Sphere:
     def diffusecolor(self, M):
         return self.diffuse
 
-    def light(self, O, D, d, scene, bounce):
+    def light(self, O, D, d, scene, RO, bounce, hitmap=False):
         M = (O + D * d)                         # intersection point
         N = (M - self.c) * (1. / self.r)        # normal
         toL = (L - M).norm()                    # direction to light
-        toO = (E - M).norm()                    # direction to ray origin
+        toO = (RO - M).norm()                    # direction to ray origin
         nudged = M + N * .0001                  # M nudged to avoid itself
 
-        # Shadow: find if the point is shadowed or not.
-        # This amounts to finding out if M can see the light
-        light_distances = [s.intersect(nudged, toL) for s in scene]
-        light_nearest = reduce(np.minimum, light_distances)
-        seelight = light_distances[scene.index(self)] == light_nearest
+        if not hitmap:
+            # Shadow: find if the point is shadowed or not.
+            # This amounts to finding out if M can see the light
+            light_distances = [s.intersect(nudged, toL) for s in scene]
+            light_nearest = reduce(np.minimum, light_distances)
+            seelight = light_distances[scene.index(self)] == light_nearest
 
-        # Ambient
-        color = AMBIENT
+            # Ambient
+            color = AMBIENT
 
-        # Lambert shading (diffuse)
-        lv = np.maximum(N.dot(toL), 0)
-        color += self.diffusecolor(M) * lv * seelight
+            # Lambert shading (diffuse)
+            lv = np.maximum(N.dot(toL), 0)
+            color += self.diffusecolor(M) * lv * seelight
 
-        # Reflection
-        if bounce < BOUNCES:
-            rayD = (D - N * 2 * D.dot(N)).norm()
-            color += raytrace(nudged, rayD, scene, bounce + 1) * self.mirror
+            # Reflection
+            if bounce < BOUNCES:
+                rayD = (D - N * 2 * D.dot(N)).norm()
 
-        # Blinn-Phong shading (specular)
-        phong = N.dot((toL + toO).norm())
-        color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
+                color += raytrace(nudged, rayD, scene, RO, bounce + 1) * self.mirror
+
+            # Blinn-Phong shading (specular)
+            phong = N.dot((toL + toO).norm())
+            color += rgb(1, 1, 1) * np.power(np.clip(phong, 0, 1), 50) * seelight
+        else:
+            color = self.diffuse
+            if bounce<BOUNCES:
+                rayD = (D - N * 2 * D.dot(N)).norm()
+                color = raytrace(nudged, rayD, scene, RO, bounce + 1, hitmap=True)  # * self.mirror
+
         return color
+
 
 class CheckeredSphere(Sphere):
     def diffusecolor(self, M):
@@ -286,16 +330,18 @@ class CheckeredSphere(Sphere):
         return self.diffuse * checker
 
 if __name__ == "__main__":
-
+    opos = vec3(0.,0.25,0.4)
+    odir = vec3(0.0,1.,0.).rotate(X,1*np.pi/180)
     #Swapped for cylinder
     #dummyvar = Cylinder(vec3(-2.75, .1, 3.5), 0.6, vec3(0.0,1.0,0.0),diffuse=rgb(1., .572, .184))
     #Sphere(vec3(-2.75, .1, 3.5), .6, rgb(1., .572, .184)),
     scene = [
-        #Sphere(vec3(.75, .1, 1.), 0.6, rgb(0, 0, 1)),
+        Sphere(vec3(0, -1.2, 0.1), 0.2, rgb(0, 0, 1),mirror=1.0),
         #Sphere(vec3(-.75, 2.25, 0.1), .6, rgb(.5, .223, .5)),
         #Cylinder(vec3(-2.75,3.5,0.0), 0.5, vec3(0.0,1.0,1.0),diffuse=rgb(1., .0, .0)),
-        #Cylinder(vec3(.75,1.0,-0.5), 5, vec3(0.0,0.0,1.0),cap=2.0, diffuse=rgb(0.0, .0, 1.0)),
-        Disc(vec3(0,0,0.5), 0.75, vec3(0.0,1.0,1), vec3(1.0,0.0,0.0), diffuse=rgb(0.0, .0, 1.0)),
+        #Cylinder(opos, 0.05, odir,cap=0.1, diffuse=rgb(.5, 0., 1.0)),
+        Disc(opos, 0.5, odir, vec3(1.0,0.0,0.0), diffuse=rgb(1.0, 1.0, 1.0).norm(), mirror=1),
+        Disc(vec3(0.,-2,0.4), 0.5, odir*-1, vec3(1.0, 0.0, 0.0), diffuse=rgb(0.0, .0, 1.0), mirror=1),
         CheckeredSphere(vec3(0,0, -99999.5), 99999, rgb(.75, .75, .75), 0.25),
         ]
 
@@ -307,9 +353,9 @@ if __name__ == "__main__":
 
     t0 = time.time()
     Q = vec3(x, 0, y)
-    color = raytrace(E, (Q - E).norm(), scene,hitmap=False)
+    color = raytrace(E, (Q - E).norm(), scene, E, hitmap=True)
     print("Took {0}".format(time.time() - t0))
 
-
+    #color = tone_map(color)
     rgb = [Image.fromarray((255 * np.clip(c, 0, 1).reshape((h, w))).astype(np.uint8), "L") for c in color.components()]
     Image.merge("RGB", rgb).save("fig.png")
