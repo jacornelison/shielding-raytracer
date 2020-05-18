@@ -128,7 +128,7 @@ configDict["tempcolors"] = {
 
 configDict["BAfff"] = {
     "height" : 3.2, # in meters
-    "tilt" : 0., # degrees
+    "tilt" : 45., # degrees
     "roll" : 0., # degrees
     "offset" : 0.4, # in meters
     "dims" : [2.75, 1.8], # [width height]

@@ -377,19 +377,24 @@ def multipanel_gs(scene, pos,dir,ort,radlist, htlist, nsides, clr=rgb(1.0,1.0,1.
 if __name__ == "__main__":
     pos0 = vec3(0,3.,0)
     verts = np.array([[-1,1],[1,1],[1,-1],[-1,-1]])
+    # scene = [
+    #     Quad(pos0,Z,Y,verts,diffuse=rgb(1.,1.,1.),mirror=0.3),
+    #     Quad(pos0+Z*2.5+Y*0.5, Y, Z, verts, diffuse=rgb(1, 1, 1), mirror=0.3),
+    #     Quad(pos0+Z*5,Z,Y, verts, diffuse=rgb(1, 1, 1), mirror=0.3),
+    #     Quad(pos0+Z*2.5+X*0.5, X, Z, verts, diffuse=rgb(1, 0, 0), mirror=0.3),
+    #     Quad(pos0+Z*2.5-X*0.5, X, Z, verts, diffuse=rgb(0, 1, 0), mirror=0.3),
+    #     ]
+    odir = Z.copy()
+    oort = Y.copy().rotate(Z,np.pi/4)
     scene = [
-        Quad(pos0,Z,Y,verts,diffuse=rgb(1.,1.,1.),mirror=0.3),
-        Quad(pos0+Z*2.5+Y*0.5, Y, Z, verts, diffuse=rgb(1, 1, 1), mirror=0.3),
-        Quad(pos0+Z*5,Z,Y, verts, diffuse=rgb(1, 1, 1), mirror=0.3),
-        Quad(pos0+Z*2.5+X*0.5, X, Z, verts, diffuse=rgb(1, 0, 0), mirror=0.3),
-        Quad(pos0+Z*2.5-X*0.5, X, Z, verts, diffuse=rgb(0, 1, 0), mirror=0.3),
-
-
-        ]
+        Quad(pos0,odir.rotate(X,np.pi/2),oort.rotate(X,np.pi/2),verts)
+    ]
 
     RL = [2.79,5.05,7.34]
     HT = [0,0.94,3.97]
-    #scene = make_gs(scene,opos,odir,X,0.1,0.3,0.3,8, clr=rgb(0.1,0.5,0.1),mirr=0.75)
+
+    #scene = make_gs(scene,opos,odir,X,0.1,0.3,0.3,8, clr=rgb(0.1,
+    # 0.5,0.1),mirr=0.75)
     #scene = multipanel_gs(scene, opos, odir, oort, RL,HT, 8, clr=rgb(0.1, 0.5, 0.1), mirr=0.1*1.0)
 
     r = float(w) / h

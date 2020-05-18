@@ -217,15 +217,34 @@ def make_forebaffles(scene, config, az, el, dk, fbclrs, mirr=0.001):
 def make_mirror(scene,config,mirr_config,az,el):
     mcon = mirr_config.copy()
     mcf = config.copy()
+
+    # Account for mount and mirror offsets
     mcf["aptoffr"] = 0
     mcf["drumangle"] = 0
     mcf["aptoffz"] = mcf["aptoffz"] + mcon["height"]
-    mpos = ORG.copy() + rt.vec3(mcon["offset"], 0, 0)
+
+    # Transform mirror position
+    mpos = ORG.copy() + rt.vec3(0, mcon["offset"], 0)
+
+    # Transform mirror dir and orts about roll
     mdir = Z.copy() * -1
     mort = X.copy()
-    mdir = zyz(mdir, np.pi / 2, mcon["roll"] * np.pi / 180, 0)
-    mdir = zyz(mdir, 0, mcon["tilt"] * np.pi / 180, 0)
-    mpos, mdir, mort = mountxform(mpos, mdir, mort, az, el, np.pi / 2, mcf)
+    mort2 = mdir.cross(mort).norm()
+
+    mdirP = zyz(mdir, np.pi / 2, mcon["roll"] * np.pi / 180, 0,
+               e1=mort, e2=mort2, e3=mdir)
+    mortP = zyz(mort, np.pi / 2, mcon["roll"] * np.pi / 180, 0,
+               e1=mort, e2=mort2, e3=mdir)
+    mort2P = zyz(mort2, np.pi / 2, mcon["roll"] * np.pi / 180, 0,
+               e1=mort, e2=mort2, e3=mdir)
+
+    # Transform mirror dir and orts about tilt
+    mdirPP = zyz(mdirP, 0, mcon["tilt"] * np.pi / 180, 0,
+               e1=mortP, e2=mort2P, e3=mdirP)
+    mortPP = zyz(mortP, 0, mcon["tilt"] * np.pi / 180, 0,
+               e1=mortP, e2=mort2P, e3=mdirP)
+
+    mpos, mdir, mort = mountxform(mpos, mdirPP, mortPP, az, el, 0, mcf)
     vw = mcon["dims"][0] / 2
     vh = mcon["dims"][1] / 2
     verts = np.array([[-vw, vh], [vw, vh], [vw, -vh], [-vw, -vh]])
@@ -238,8 +257,9 @@ def get_hit_frac(cmap,c_id,pperd):
     cd = cmap.sum()
     ind = (cmap == c_id)
     return (np.size(np.where(ind)) / (npix ** 2))
+
 # Y-Z'-Y'' Rotation Matrix
-def zyz(V,a,b,g,e1=X,e2=Y,e3=Z):
+def zyz(V,a,b,g,e1=X.copy(),e2=Y.copy(),e3=Z.copy()):
     V = V.rotate(e3, g)
     XP = e1.rotate(e3,g)
     YP = e2.rotate(e3, g)
