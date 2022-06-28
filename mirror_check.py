@@ -33,6 +33,9 @@ def get_args():
                         help="Set mirror tilt in degrees.",
                         default=45.,
                         type=float)
+    parser.add_argument("--savedir",
+                        help="Directory to save figures",
+                        default='./')
     return parser, parser.parse_args()
 
 
@@ -41,7 +44,7 @@ if __name__ == "__main__":
     def_dict = "BA"
     def_mirrdict = "BAfff"
     parser, args = get_args()
-    dirname = "../postings/20200206_mirror_check2/figs/"
+    dirname = args.savedir
 
     cf = configDict[args.config].copy()
     mirrcf = configDict[args.mirrconfig].copy()
@@ -157,7 +160,7 @@ if __name__ == "__main__":
             cbar = plt.colorbar()
             cbar.ax.set_ylabel('Unique positions', rotation=270)
             plt.title("Mirror pos: {} m".format(args.mirroffs))
-            fname = dirname + "unique_hits_off_{0:.2}_tilt_{1:.2}".format(args.mirroffs,args.mirrtilt)
+            fname = dirname + "unique_hits_off_{0}_tilt_{1}".format(imoffs,int(args.mirrtilt))
             print("saving: " + fname)
             plt.savefig(fname + ".png", dpi=1 * pixconv)
             #plt.show()
